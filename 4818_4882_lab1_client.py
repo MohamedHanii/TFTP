@@ -4,6 +4,8 @@ import os
 import enum
 
 import socket
+import struct
+
 
 class TftpProcessor(object):
     """
@@ -30,13 +32,18 @@ class TftpProcessor(object):
     think they are "private" only. Private functions in Python
     start with an "_", check the example below
     """
+    
 
     class TftpPacketType(enum.Enum):
         """
         Represents a TFTP packet type add the missing types here and
         modify the existing values as necessary.
         """
-        RRQ = 1
+        RRQ     = 1
+        WRQ     = 2
+        DATA    = 3
+        ACK     = 4
+        ERROR   = 5
 
 
     def __init__(self):
@@ -46,10 +53,9 @@ class TftpProcessor(object):
 
         Here's an example of what you can do inside this function.
         """
-
         
         self.packet_buffer = []
-        pass
+        
 
 
 
@@ -69,20 +75,23 @@ class TftpProcessor(object):
         # This shouldn't change.
         self.packet_buffer.append(out_packet)
 
-
+    # Know that type of packet 
     def _parse_udp_packet(self, packet_bytes):
         """
         You'll use the struct module here to determine
         the type of the packet and extract other available
         information.
         """
+
+
         pass
 
-
+    # used to make packet return packet that will be put in buffer
     def _do_some_logic(self, input_packet):
         """
         Example of a private function that does some logic.
         """
+
         pass
 
 
@@ -130,10 +139,18 @@ class TftpProcessor(object):
         accept is the file name. Remove this function if you're
         implementing a server.
         """
-        print("Hello")
-        
 
-        pass
+        print("****** Start Uploading File *******")
+
+        # C_socket,serv_address = do_socket_logic()
+        process_udp_packet()
+        mode = b'octet'
+        opcode = self.TftpPacketType.WRQ.value
+        packet = struct.pack('! H {}s B {}s B'.format(len(file_path_on_server),len(mode)),opcode, file_path_on_server.encode('ascii'), 0, mode, 0)
+        if packet:
+
+
+            pass
 
 
 def check_file_name():
@@ -154,10 +171,16 @@ def setup_sockets(address):
     """
 
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_address=("127.0.0.1",69)
-    
-    pass
+    server_address=(address,69)
 
+    # while True:
+
+    #     client_socket.sendto(packet,server_address)
+
+    #     (packet,rev_addr) = client_socket.recvfrom(516)
+    #     process.process_udp_packet(packet,rev_addr)
+
+    return client_socket,server_address
 
 def do_socket_logic():
     """
@@ -166,7 +189,11 @@ def do_socket_logic():
 
     Feel free to delete this function.
     """
-    pass
+
+    C_socket,serv_address = setup_sockets("127.0.0.1")
+    
+    return C_socket,serv_address
+    
 
 
 def parse_user_input(address, operation, file_name=None):
@@ -176,9 +203,30 @@ def parse_user_input(address, operation, file_name=None):
     # But don't add socket code in the TftpProcessor class.
     # Feel free to delete this code as long as the
     # functionality is preserved.
+
+    
+    # setup_sockets(address)
+
+    process = TftpProcessor()
+
     if operation == "push":
         print(f"Attempting to upload [{file_name}]...")
+        process.upload_file(file_name)
 
+        # process.get_next_output_packet
+
+
+        print("Packet is ", packet)
+        print("rev addres is ",rev_addr)
+        opcode =struct.unpack('!H',packet[:2])[0]
+        print("Last Opcode  = ",opcode )
+
+        if process.TftpPacketType.ACK.value == opcode:
+            block_num = struct.unpack('!H',packet[2:4])[0]
+            print(block_num)
+            fd = open(file_name, 'rb')
+            data = fd.read(512)
+            packet = struct.pack('!H H',process.TftpPacketType.DATA.value,block_num) +data
         pass
     
     elif operation == "pull":
