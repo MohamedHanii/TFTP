@@ -54,12 +54,15 @@ class TftpProcessor(object):
         """
         # indicate 0 => Starting packet  1 => indicate connected to server
         self.packet_buffer = []
-        self.done = False
         self.block_number = 0
-        self.recieve = True
-        self.err_msg = ""
-        self.repeat = False
 
+        self.done = False   # start/stop the Tftp protocol
+        self.receive = True # start/stop recieving packets
+        self.repeat = False # to send the packet again incase of mismatching
+
+        self.err_code = 0  
+        self.err_msg = ""
+        
         
     def process_udp_packet(self, packet_data, packet_source):
         """
@@ -78,7 +81,6 @@ class TftpProcessor(object):
         self.packet_buffer.append(out_packet)
 
 
-    # Know that type of packet 
     def _parse_udp_packet(self, packet_bytes):
         """
         You'll use the struct module here to determine
@@ -88,12 +90,12 @@ class TftpProcessor(object):
         opcode =struct.unpack('!H',packet_bytes[:2])[0]
 
         if opcode == self.TftpPacketType.DATA.value:
-            self.block_number = struct.unpack('!H',packet_bytes[2:4])[0]
+            self.block_number = struct.unpack('!H', packet_bytes[2:4])[0]
             self.fd.write(packet_bytes[4:])
             if len(packet_bytes) < (512+4):
                 self.fd.close()
                 self.done = True
-                self.recieve = False
+                self.receive = False
 
         elif opcode == self.TftpPacketType.ACK.value:
             block_number = struct.unpack('!H',packet_bytes[2:4])[0]
@@ -105,26 +107,33 @@ class TftpProcessor(object):
         return opcode
 
 
-    # used to make packet return packet that will be put in buffer
     def _do_some_logic(self, input_packet):
         """
-        Example of a private function that does some logic.
+        Used to make a packet that will be put inside the buffer.
         """
 
         if input_packet == self.TftpPacketType.ACK.value:
             data = self.fd.read(512)
+            # check if it is the final data packet
             if len(data) < 512:
                 self.done = True
+
+            # check if there was a mismatch in a data packet to ask for it again
             if self.repeat:
                 packet = struct.pack('!HH', self.TftpPacketType.DATA.value, self.block_number) + data
+
+            # get the next data packet
             else:
                 self.block_number += 1
                 packet = struct.pack('!HH', self.TftpPacketType.DATA.value, self.block_number) + data
 
         elif input_packet == self.TftpPacketType.DATA.value:
             packet = struct.pack('!HH', self.TftpPacketType.ACK.value, self.block_number)
+
+        # if error, terminate the connection
         elif input_packet == self.TftpPacketType.ERROR.value:
             sys.exit()
+
         return packet
 
 
@@ -159,8 +168,10 @@ class TftpProcessor(object):
         accept is the file name. Remove this function if you're
         implementing a server.
         """
-        check = os.path.exists(file_path_on_server)
-        if check:
+
+        # check before sending a request if the file already exists
+        exists = os.path.exists(file_path_on_server)
+        if exists:
             return self.raise_err(6)
             
         try: 
@@ -169,9 +180,7 @@ class TftpProcessor(object):
             opcode = self.TftpPacketType.RRQ.value
             file_path_on_server = file_path_on_server.encode('ascii')
             packet = struct.pack('!H{}sB{}sB'.format(len(file_path_on_server), len(mode)), opcode, file_path_on_server, 0, mode, 0)
-
-        except:
-            
+        except:  # incase access violation 
             packet = self.raise_err(2)
 
         return packet
@@ -185,25 +194,30 @@ class TftpProcessor(object):
         accept is the file name. Remove this function if you're
         implementing a server.
         """
+
         try:
             self.fd = open(file_path_on_server, 'rb')
             mode = b'octet'
             opcode = self.TftpPacketType.WRQ.value
             file_path_on_server = file_path_on_server.encode('ascii')
             packet = struct.pack('!H{}sB{}sB'.format(len(file_path_on_server), len(mode)), opcode, file_path_on_server, 0, mode, 0)
-
         except:
-            check = os.path.exists(file_path_on_server)
-            if not check:     
+            exists = os.path.exists(file_path_on_server)
+            if not exists:  # incase file not found   
                 packet = self.raise_err(1)
-            else:
+            else: # incase access violation 
                 packet = self.raise_err(2)
         return packet
     
+    
     def raise_err(self,err_code):
+        """
+        This method is for handling errors and
+        stopping the Tftp protocol and receiving packets
+        """
         self.err_code = err_code
         self.done = True
-        self.recieve = False
+        self.receive = False
 
         if err_code == 0:
             self.err_msg = b"Not defined, see error message (if any)."
@@ -227,6 +241,7 @@ class TftpProcessor(object):
 
         packet = struct.pack('!HH{}sB'.format(len(self.err_msg)), self.TftpPacketType.ERROR.value, self.err_code,self.err_msg, 0)
         return packet
+
 
 def check_file_name():
     script_name = os.path.basename(__file__)
@@ -257,21 +272,20 @@ def do_socket_logic(process,address,request_packet):
 
     Feel free to delete this function.
     """
-    C_socket,C_server=setup_sockets(address)
+    C_socket, C_server = setup_sockets(address)
 
     if request_packet:
         C_socket.sendto(request_packet, C_server)
-        if process.recieve:
+        if process.receive:
             packet, rev_addr = C_socket.recvfrom((512+4))
         
     while not process.done: 
         process.process_udp_packet(packet, rev_addr)
         if process.has_pending_packets_to_be_sent():
             C_socket.sendto(process.get_next_output_packet(), rev_addr)
-            if process.recieve:
+            if process.receive:
                 packet, rev_addr = C_socket.recvfrom((512+4))
     
-
 
 def parse_user_input(address, operation, file_name=None):
     # Your socket logic can go here,
@@ -293,7 +307,8 @@ def parse_user_input(address, operation, file_name=None):
         print(f"Attempting to download [{file_name}]...")
         request_packet = process.request_file(file_name)
         do_socket_logic(process, address,request_packet)
-    else:
+
+    else: # incase of illegal tftp operation
        do_socket_logic(process, address,process.raise_err(4)) 
 
 
@@ -333,7 +348,7 @@ def main():
     # The IP of the server, some default values
     # are provided. Feel free to modify them.
     ip_address = get_arg(1, "127.0.0.1")
-    operation = get_arg(2, "pull")
+    operation = get_arg(2, "push")
     file_name = get_arg(3, "test.txt")
 
     # Modify this as needed.
